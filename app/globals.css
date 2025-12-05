@@ -1,8 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* V.I.C.T.O.R. Dark Clinical Aesthetic */
+  --background: #000000;
+  --foreground: #ededed;
+  
+  /* V.I.C.T.O.R. Color Palette */
+  --victor-red-primary: #ef4444;
+  --victor-red-secondary: #dc2626;
+  --victor-red-border: #991b1b;
+  --victor-yellow-primary: #eab308;
+  --victor-yellow-secondary: #ca8a04;
+  --victor-yellow-border: #a16207;
+  --victor-gray-text: #9ca3af;
+  --victor-gray-border: #374151;
 }
 
 @theme inline {
@@ -12,15 +23,85 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+/* V.I.C.T.O.R. System Defaults - Always Dark Mode */
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+/* V.I.C.T.O.R. Data Display Elements */
+.victor-data-display {
+  font-family: var(--font-geist-mono), 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* V.I.C.T.O.R. Clinical Interface Elements */
+.victor-panel {
+  background: #000000;
+  border: 1px solid var(--victor-red-border);
+}
+
+.victor-alert-high {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: var(--victor-red-primary);
+  color: var(--victor-red-primary);
+}
+
+.victor-alert-moderate {
+  background: rgba(234, 179, 8, 0.1);
+  border-color: var(--victor-yellow-primary);
+  color: var(--victor-yellow-primary);
+}
+
+/* V.I.C.T.O.R. Focus Management for Emergency Use */
+.victor-focus-ring:focus {
+  outline: 2px solid var(--victor-yellow-primary);
+  outline-offset: 2px;
+}
+
+.victor-focus-ring:focus-visible {
+  outline: 2px solid var(--victor-yellow-primary);
+  outline-offset: 2px;
+}
+
+/* V.I.C.T.O.R. High Contrast Borders */
+.victor-border-primary {
+  border-color: var(--victor-red-primary);
+}
+
+.victor-border-secondary {
+  border-color: var(--victor-yellow-primary);
+}
+
+/* Screen Reader Only Content */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Skip Link for Keyboard Navigation */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 6px;
+  background: var(--victor-yellow-primary);
+  color: #000;
+  padding: 8px;
+  text-decoration: none;
+  z-index: 9999;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.skip-link:focus {
+  top: 6px;
 }
