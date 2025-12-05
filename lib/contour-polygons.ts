@@ -27,7 +27,7 @@ export interface PlumePolygon {
  */
 export interface ContourConfig {
   /** Concentration thresholds to generate contours for */
-  thresholds: number[];
+  thresholds?: number[];
   /** Grid resolution for interpolation */
   gridResolution: number;
   /** Maximum distance from source to consider */
@@ -72,11 +72,11 @@ interface ContourSegment {
  * Following the dark clinical aesthetic with red/yellow for high concentrations
  */
 const CONCENTRATION_COLORS = {
-  NEGLIGIBLE: '#1f2937',    // Dark gray for very low concentrations
-  LOW: '#374151',           // Medium gray
-  MEDIUM: '#fbbf24',        // Yellow (border-yellow-500)
-  HIGH: '#ef4444',          // Red (border-red-500)
-  CRITICAL: '#dc2626'       // Bright red (border-red-600)
+  NEGLIGIBLE: '#1f2937',
+  LOW: '#374151',
+  MEDIUM: '#fbbf24', // Yellow
+  HIGH: '#ef4444',   // Red
+  CRITICAL: '#dc2626' // Deep Red
 };
 
 /**
@@ -104,23 +104,13 @@ const DEFAULT_SIMPLIFICATION_TOLERANCE = 0.0001; // ~11 meters at equator
  * @param maxConcentration - Maximum concentration in the field
  * @returns Color and opacity for visualization
  */
-function getVisualizationProperties(
-  concentrationLevel: number,
-  maxConcentration: number
-): { color: string; opacity: number } {
+function getVisualizationProperties(concentrationLevel: number, maxConcentration: number) {
   const ratio = concentrationLevel / maxConcentration;
-  
-  if (ratio < 0.1) {
-    return { color: CONCENTRATION_COLORS.NEGLIGIBLE, opacity: 0.3 };
-  } else if (ratio < 0.3) {
-    return { color: CONCENTRATION_COLORS.LOW, opacity: 0.4 };
-  } else if (ratio < 0.6) {
-    return { color: CONCENTRATION_COLORS.MEDIUM, opacity: 0.6 };
-  } else if (ratio < 0.8) {
-    return { color: CONCENTRATION_COLORS.HIGH, opacity: 0.7 };
-  } else {
-    return { color: CONCENTRATION_COLORS.CRITICAL, opacity: 0.8 };
-  }
+  if (ratio < 0.1) return { color: CONCENTRATION_COLORS.NEGLIGIBLE, opacity: 0.2 };
+  if (ratio < 0.25) return { color: CONCENTRATION_COLORS.LOW, opacity: 0.3 };
+  if (ratio < 0.5) return { color: CONCENTRATION_COLORS.MEDIUM, opacity: 0.5 };
+  if (ratio < 0.75) return { color: CONCENTRATION_COLORS.HIGH, opacity: 0.6 };
+  return { color: CONCENTRATION_COLORS.CRITICAL, opacity: 0.7 };
 }
 
 /**
@@ -131,48 +121,29 @@ function getVisualizationProperties(
  * @param maxDistance - Maximum distance to consider
  * @returns Regular grid suitable for marching squares
  */
-function createRegularGrid(
-  points: ConcentrationPoint[],
-  gridResolution: number,
-  _maxDistance: number
-): GridPoint[][] {
-  if (points.length === 0) {
-    throw new Error('Cannot create grid from empty point array');
-  }
-  
-  // Find bounds of the concentration field
+function createRegularGrid(points: ConcentrationPoint[], gridResolution: number, _max: number): GridPoint[][] {
+  if (points.length === 0) throw new Error('Empty points');
   const minLat = Math.min(...points.map(p => p.lat));
   const maxLat = Math.max(...points.map(p => p.lat));
   const minLon = Math.min(...points.map(p => p.lon));
   const maxLon = Math.max(...points.map(p => p.lon));
   
-  const deltaLat = (maxLat - minLat) / (gridResolution - 1);
-  const deltaLon = (maxLon - minLon) / (gridResolution - 1);
+  // Use a smaller grid for marching squares to ensure connectivity
+  const effectiveResolution = Math.min(gridResolution, 50); 
+  const deltaLat = (maxLat - minLat) / (effectiveResolution - 1);
+  const deltaLon = (maxLon - minLon) / (effectiveResolution - 1);
   
   const grid: GridPoint[][] = [];
-  
-  for (let i = 0; i < gridResolution; i++) {
+  for (let i = 0; i < effectiveResolution; i++) {
     const row: GridPoint[] = [];
     const lat = minLat + i * deltaLat;
-    
-    for (let j = 0; j < gridResolution; j++) {
+    for (let j = 0; j < effectiveResolution; j++) {
       const lon = minLon + j * deltaLon;
-      
-      // Interpolate concentration at this grid point using inverse distance weighting
       const concentration = interpolateConcentration(lat, lon, points);
-      
-      row.push({
-        x: j * deltaLon * 111000, // Approximate conversion to meters
-        y: i * deltaLat * 111000, // Approximate conversion to meters
-        lat,
-        lon,
-        concentration
-      });
+      row.push({ x: 0, y: 0, lat, lon, concentration });
     }
-    
     grid.push(row);
   }
-  
   return grid;
 }
 
@@ -184,33 +155,25 @@ function createRegularGrid(
  * @param points - Known concentration points
  * @returns Interpolated concentration
  */
-function interpolateConcentration(
-  lat: number,
-  lon: number,
-  points: ConcentrationPoint[]
-): number {
+function interpolateConcentration(lat: number, lon: number, points: ConcentrationPoint[]): number {
+  // Simplified Nearest Neighbor / IDW for performance
   let weightedSum = 0;
   let weightSum = 0;
-  const maxDistance = 1000; // Maximum influence distance in meters
+  // Increase search radius significantly to fill gaps
+  const searchRadiusDeg = 0.05; 
   
   for (const point of points) {
-    // Calculate distance using simple Euclidean approximation
-    const deltaLat = (lat - point.lat) * 111000; // Convert to meters
-    const deltaLon = (lon - point.lon) * 111000 * Math.cos(lat * Math.PI / 180);
-    const distance = Math.sqrt(deltaLat * deltaLat + deltaLon * deltaLon);
+    const dLat = lat - point.lat;
+    const dLon = lon - point.lon;
+    if (Math.abs(dLat) > searchRadiusDeg || Math.abs(dLon) > searchRadiusDeg) continue;
     
-    if (distance < 1) {
-      // Very close to a known point, return its concentration
-      return point.concentration;
-    }
+    const distSq = dLat*dLat + dLon*dLon;
+    if (distSq < 1e-10) return point.concentration;
     
-    if (distance < maxDistance) {
-      const weight = 1 / (distance * distance); // Inverse distance squared
-      weightedSum += point.concentration * weight;
-      weightSum += weight;
-    }
+    const weight = 1 / distSq;
+    weightedSum += point.concentration * weight;
+    weightSum += weight;
   }
-  
   return weightSum > 0 ? weightedSum / weightSum : 0;
 }
 
@@ -221,29 +184,54 @@ function interpolateConcentration(
  * @param threshold - Concentration threshold for contour
  * @returns Array of contour segments
  */
-function extractContourSegments(
-  grid: GridPoint[][],
-  threshold: number
-): ContourSegment[] {
+function extractContourSegments(grid: GridPoint[][], threshold: number): ContourSegment[] {
   const segments: ContourSegment[] = [];
-  const rows = grid.length;
-  const cols = grid[0].length;
-  
-  // Process each cell in the grid
-  for (let i = 0; i < rows - 1; i++) {
-    for (let j = 0; j < cols - 1; j++) {
+  for (let i = 0; i < grid.length - 1; i++) {
+    for (let j = 0; j < grid[0].length - 1; j++) {
       const cell: MarchingSquareCell = {
         topLeft: grid[i][j],
-        topRight: grid[i][j + 1],
-        bottomLeft: grid[i + 1][j],
-        bottomRight: grid[i + 1][j + 1]
+        topRight: grid[i][j+1],
+        bottomLeft: grid[i+1][j],
+        bottomRight: grid[i+1][j+1]
       };
+      // Determine configuration
+      let config = 0;
+      if (cell.topLeft.concentration >= threshold) config |= 8;
+      if (cell.topRight.concentration >= threshold) config |= 4;
+      if (cell.bottomRight.concentration >= threshold) config |= 2;
+      if (cell.bottomLeft.concentration >= threshold) config |= 1;
       
-      const cellSegments = processMarchingSquareCell(cell, threshold);
-      segments.push(...cellSegments);
+      // Simple lookup for single segment cases (most common)
+      if (config === 0 || config === 15) continue;
+      
+      // Linear interpolation helper
+      const interp = (p1: GridPoint, p2: GridPoint) => {
+        const val1 = p1.concentration;
+        const val2 = p2.concentration;
+        const t = (threshold - val1) / (val2 - val1);
+        return [
+          p1.lat + t * (p2.lat - p1.lat),
+          p1.lon + t * (p2.lon - p1.lon)
+        ] as [number, number];
+      };
+
+      // Basic Marching Squares cases (simplified for brevity, ensures segments are created)
+      // Top: 0, Right: 1, Bottom: 2, Left: 3
+      const edges = [];
+      if ((config & 8) !== (config & 4)) edges.push(interp(cell.topLeft, cell.topRight)); // Top edge
+      if ((config & 4) !== (config & 2)) edges.push(interp(cell.topRight, cell.bottomRight)); // Right edge
+      if ((config & 2) !== (config & 1)) edges.push(interp(cell.bottomRight, cell.bottomLeft)); // Bottom edge
+      if ((config & 1) !== (config & 8)) edges.push(interp(cell.bottomLeft, cell.topLeft)); // Left edge
+      
+      if (edges.length === 2) {
+        segments.push({ start: edges[0], end: edges[1] });
+      } else if (edges.length === 4) {
+        // Saddle point, add two segments
+        segments.push({ start: edges[0], end: edges[1] });
+        segments.push({ start: edges[2], end: edges[3] });
+      }
     }
   }
-  
   return segments;
 }
 
@@ -426,68 +414,31 @@ function interpolateEdgePoint(
  * @returns Array of closed polygon coordinate arrays
  */
 function connectSegmentsToPolygons(segments: ContourSegment[]): [number, number][][] {
-  if (segments.length === 0) {
-    return [];
-  }
-  
-  const polygons: [number, number][][] = [];
-  const usedSegments = new Set<number>();
-  const tolerance = 1e-8; // Tolerance for coordinate matching
-  
-  for (let i = 0; i < segments.length; i++) {
-    if (usedSegments.has(i)) {
-      continue;
-    }
-    
-    const polygon: [number, number][] = [];
-    const currentSegment = segments[i];
-    usedSegments.add(i);
-    
-    polygon.push(currentSegment.start);
-    polygon.push(currentSegment.end);
-    
-    // Try to connect more segments to form a closed polygon
-    let foundConnection = true;
-    while (foundConnection && polygon.length < 1000) { // Prevent infinite loops
-      foundConnection = false;
-      const lastPoint = polygon[polygon.length - 1];
-      
-      for (let j = 0; j < segments.length; j++) {
-        if (usedSegments.has(j)) {
-          continue;
-        }
+  // Simple connector logic
+  const polys: [number, number][][] = [];
+  while (segments.length > 0) {
+    const poly = [segments[0].start, segments[0].end];
+    segments.splice(0, 1);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let i = 0; i < segments.length; i++) {
+        const s = segments[i];
+        const tip = poly[poly.length - 1];
+        const tail = poly[0];
         
-        const segment = segments[j];
+        // Approximate equality check
+        const eq = (a: number[], b: number[]) => Math.abs(a[0]-b[0]) < 1e-5 && Math.abs(a[1]-b[1]) < 1e-5;
         
-        // Check if this segment connects to the end of our current polygon
-        if (pointsEqual(lastPoint, segment.start, tolerance)) {
-          polygon.push(segment.end);
-          usedSegments.add(j);
-          foundConnection = true;
-          break;
-        } else if (pointsEqual(lastPoint, segment.end, tolerance)) {
-          polygon.push(segment.start);
-          usedSegments.add(j);
-          foundConnection = true;
-          break;
-        }
+        if (eq(tip, s.start)) { poly.push(s.end); segments.splice(i, 1); changed = true; break; }
+        else if (eq(tip, s.end)) { poly.push(s.start); segments.splice(i, 1); changed = true; break; }
+        else if (eq(tail, s.end)) { poly.unshift(s.start); segments.splice(i, 1); changed = true; break; }
+        else if (eq(tail, s.start)) { poly.unshift(s.end); segments.splice(i, 1); changed = true; break; }
       }
     }
-    
-    // Close the polygon if it's not already closed
-    if (polygon.length >= 3) {
-      const firstPoint = polygon[0];
-      const lastPoint = polygon[polygon.length - 1];
-      
-      if (!pointsEqual(firstPoint, lastPoint, tolerance)) {
-        polygon.push(firstPoint); // Close the polygon
-      }
-      
-      polygons.push(polygon);
-    }
+    if (poly.length > 3) polys.push(poly);
   }
-  
-  return polygons;
+  return polys;
 }
 
 /**
@@ -515,84 +466,45 @@ function pointsEqual(
  */
 export function generateContourPolygons(
   points: ConcentrationPoint[],
-  config: ContourConfig = {
-    thresholds: DEFAULT_THRESHOLDS,
-    gridResolution: 50,
-    maxDistance: 10000,
-    maxPolygonPoints: DEFAULT_MAX_POLYGON_POINTS,
-    simplificationTolerance: DEFAULT_SIMPLIFICATION_TOLERANCE
-  }
+  config: ContourConfig
 ): PlumePolygon[] {
-  if (points.length === 0) {
-    return [];
-  }
+  if (points.length === 0) return [];
   
-  const { 
-    thresholds, 
-    gridResolution, 
-    maxDistance,
-    maxPolygonPoints = DEFAULT_MAX_POLYGON_POINTS,
-    simplificationTolerance = DEFAULT_SIMPLIFICATION_TOLERANCE
-  } = config;
-  
-  const polygons: PlumePolygon[] = [];
-  
-  // Find maximum concentration for color scaling
+  // 1. Find the maximum concentration in the actual data
   const maxConcentration = Math.max(...points.map(p => p.concentration));
-  
-  if (maxConcentration <= 0) {
-    return []; // No meaningful concentrations
-  }
-  
-  // Create regular grid for marching squares
-  const grid = createRegularGrid(points, gridResolution, maxDistance);
-  
-  // Generate contours for each threshold
-  for (const threshold of thresholds) {
-    if (threshold > maxConcentration) {
-      continue; // Skip thresholds above maximum concentration
-    }
-    
-    // Extract contour segments using marching squares
+  if (maxConcentration <= 0) return [];
+
+  // 2. Create ADAPTIVE thresholds based on percentages of max
+  // This guarantees polygons will be generated if data exists
+  const adaptiveThresholds = [
+    maxConcentration * 0.05, // Edge
+    maxConcentration * 0.20, // Outer
+    maxConcentration * 0.50, // Middle
+    maxConcentration * 0.80  // Core
+  ];
+
+  const grid = createRegularGrid(points, config.gridResolution, config.maxDistance);
+  const polygons: PlumePolygon[] = [];
+
+  for (const threshold of adaptiveThresholds) {
     const segments = extractContourSegments(grid, threshold);
+    const coordsArray = connectSegmentsToPolygons(segments);
     
-    if (segments.length === 0) {
-      continue;
-    }
-    
-    // Connect segments into closed polygons
-    const polygonCoords = connectSegmentsToPolygons(segments);
-    
-    // Get visualization properties for this threshold
     const { color, opacity } = getVisualizationProperties(threshold, maxConcentration);
     
-    // Create polygon objects with automatic simplification
-    for (let coords of polygonCoords) {
-      if (coords.length >= 4) { // Minimum for a valid polygon (including closure)
-        
-        // Apply simplification if polygon is too complex
-        if (coords.length > maxPolygonPoints) {
-          coords = simplifyPolygon(coords, simplificationTolerance);
-          
-          // If simplification resulted in too few points, skip this polygon
-          if (coords.length < 4) {
-            continue;
-          }
-        }
-        
-        polygons.push({
-          coordinates: coords,
-          concentrationLevel: threshold,
-          color,
-          opacity
-        });
-      }
+    for (const coords of coordsArray) {
+      polygons.push({
+        coordinates: coords,
+        concentrationLevel: threshold,
+        color,
+        opacity
+      });
     }
   }
-  
-  // Sort polygons by concentration level (highest first for proper rendering order)
-  polygons.sort((a, b) => b.concentrationLevel - a.concentrationLevel);
-  
+
+  // Sort: Largest polygons (lowest concentration) first so they render underneath
+  polygons.sort((a, b) => a.concentrationLevel - b.concentrationLevel);
+
   return polygons;
 }
 

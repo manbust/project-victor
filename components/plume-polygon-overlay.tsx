@@ -1,135 +1,95 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { Polygon } from 'react-leaflet';
 import { ConcentrationPoint } from '@/lib/gaussian-plume';
 import { generateContourPolygons, PlumePolygon, ContourConfig } from '@/lib/contour-polygons';
 
-/**
- * Props for the PlumePolygonOverlay component
- */
 interface PlumePolygonOverlayProps {
-  /** Array of concentration points from Gaussian plume calculation */
   concentrationGrid: ConcentrationPoint[];
-  /** Concentration thresholds to generate contours for (optional) */
   thresholds?: number[];
-  /** Grid resolution for contour generation (optional) */
   gridResolution?: number;
-  /** Maximum distance from source to consider (optional) */
   maxDistance?: number;
 }
 
 /**
- * Default concentration thresholds following V.I.C.T.O.R. safety levels
- * These represent typical safety thresholds for airborne contaminants
+ * V.I.C.T.O.R. "Red Cloud" Color Scheme
+ * Strictly enforces the red biohazard aesthetic.
+ * 
+ * - EDGE: Very faint, deep red (The outer gas cloud)
+ * - OUTER: Visible red
+ * - CORE: Intense, opaque red (The danger zone)
  */
-const DEFAULT_THRESHOLDS: number[] = [
-  1e-9,   // 1 ng/m³ - Detection limit
-  1e-8,   // 10 ng/m³ - Low concern
-  1e-7,   // 100 ng/m³ - Medium concern
-  1e-6,   // 1 μg/m³ - High concern
-  1e-5    // 10 μg/m³ - Critical level
-];
-
-/**
- * V.I.C.T.O.R. color scheme for concentration visualization
- * Following the dark clinical aesthetic with red/yellow for high concentrations
- */
-const VICTOR_COLORS = {
-  NEGLIGIBLE: '#1f2937',    // Dark gray for very low concentrations
-  LOW: '#374151',           // Medium gray
-  MEDIUM: '#fbbf24',        // Yellow (border-yellow-500)
-  HIGH: '#ef4444',          // Red (border-red-500)
-  CRITICAL: '#dc2626'       // Bright red (border-red-600)
+const VICTOR_RED_PALETTE = {
+  EDGE:  '#7f1d1d', // Darkest Red (Tailwind red-900)
+  OUTER: '#b91c1c', // Dark Red (Tailwind red-700)
+  MID:   '#ef4444', // Base Red (Tailwind red-500)
+  CORE:  '#f87171', // Light Red (Tailwind red-400) - Lighter looks "hotter" on dark maps
 } as const;
 
-/**
- * Maps concentration level to V.I.C.T.O.R. color scheme
- * 
- * @param concentrationLevel - The concentration threshold
- * @param maxConcentration - Maximum concentration in the field
- * @returns Color and opacity for visualization following V.I.C.T.O.R. aesthetic
- */
-function getVictorVisualizationProperties(
+function getVictorRedProperties(
   concentrationLevel: number,
   maxConcentration: number
 ): { color: string; opacity: number; weight: number } {
-  const ratio: number = concentrationLevel / maxConcentration;
+  const ratio = concentrationLevel / maxConcentration;
   
+  // Logic: The lower the ratio (relative to max), the further out from the center
   if (ratio < 0.1) {
+    // The visual edge of the cloud
     return { 
-      color: VICTOR_COLORS.NEGLIGIBLE, 
-      opacity: 0.3,
-      weight: 1
+      color: VICTOR_RED_PALETTE.EDGE, 
+      opacity: 0.2, // Very transparent
+      weight: 0     // No border for smooth smoke look
     };
-  } else if (ratio < 0.3) {
+  } else if (ratio < 0.4) {
     return { 
-      color: VICTOR_COLORS.LOW, 
-      opacity: 0.4,
-      weight: 1
+      color: VICTOR_RED_PALETTE.OUTER, 
+      opacity: 0.35,
+      weight: 0
     };
-  } else if (ratio < 0.6) {
+  } else if (ratio < 0.7) {
     return { 
-      color: VICTOR_COLORS.MEDIUM, 
-      opacity: 0.6,
-      weight: 2
-    };
-  } else if (ratio < 0.8) {
-    return { 
-      color: VICTOR_COLORS.HIGH, 
-      opacity: 0.7,
-      weight: 2
+      color: VICTOR_RED_PALETTE.MID, 
+      opacity: 0.5,
+      weight: 1 // Slight border
     };
   } else {
+    // The "Death Zone" center
     return { 
-      color: VICTOR_COLORS.CRITICAL, 
-      opacity: 0.8,
-      weight: 3
+      color: VICTOR_RED_PALETTE.CORE, 
+      opacity: 0.7, // Mostly opaque
+      weight: 2
     };
   }
 }
 
-/**
- * Component that renders concentration contours as Leaflet polygons on the map
- * 
- * This component takes a concentration grid from Gaussian plume calculations
- * and renders it as color-coded polygon overlays using the V.I.C.T.O.R. color scheme.
- * High concentrations are displayed in red/yellow following the clinical aesthetic.
- */
 export function PlumePolygonOverlay({
   concentrationGrid,
-  thresholds = DEFAULT_THRESHOLDS,
   gridResolution = 50,
   maxDistance = 10000
 }: PlumePolygonOverlayProps) {
   
-  /**
-   * Generate contour polygons from concentration grid
-   * Memoized to prevent unnecessary recalculation on re-renders
-   * Includes performance optimizations for polygon simplification
-   */
   const contourPolygons: PlumePolygon[] = useMemo(() => {
     if (!concentrationGrid || concentrationGrid.length === 0) {
       return [];
     }
     
     try {
-      // Performance-optimized configuration
       const config: ContourConfig = {
-        thresholds,
         gridResolution,
         maxDistance,
-        maxPolygonPoints: 100,        // Simplify polygons with more than 100 points
-        simplificationTolerance: 0.0001  // ~11 meters tolerance at equator
+        maxPolygonPoints: 100,
+        simplificationTolerance: 0.0001
       };
       
-      const polygons = generateContourPolygons(concentrationGrid, config);
+      // Generate the raw geometric polygons
+      const rawPolygons = generateContourPolygons(concentrationGrid, config);
       
-      // Apply V.I.C.T.O.R. color scheme to generated polygons
       const maxConcentration = Math.max(...concentrationGrid.map(p => p.concentration));
       
-      return polygons.map(polygon => {
-        const victorProps = getVictorVisualizationProperties(
+      // Apply the V.I.C.T.O.R. Red Paint
+      return rawPolygons.map(polygon => {
+        const victorProps = getVictorRedProperties(
           polygon.concentrationLevel,
           maxConcentration
         );
@@ -137,26 +97,18 @@ export function PlumePolygonOverlay({
         return {
           ...polygon,
           color: victorProps.color,
-          opacity: victorProps.opacity
-        };
+          opacity: victorProps.opacity,
+          // We attach the calculated props to the object to use in rendering below
+          _victorWeight: victorProps.weight
+        } as PlumePolygon & { _victorWeight: number };
       });
       
     } catch (error) {
       console.error('Error generating contour polygons:', error);
       return [];
     }
-  }, [concentrationGrid, thresholds, gridResolution, maxDistance]);
+  }, [concentrationGrid, gridResolution, maxDistance]);
   
-  /**
-   * Log polygon generation for debugging in development
-   */
-  useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log(`Generated ${contourPolygons.length} contour polygons from ${concentrationGrid.length} concentration points`);
-    }
-  }, [contourPolygons.length, concentrationGrid.length]);
-  
-  // Don't render anything if no polygons were generated
   if (contourPolygons.length === 0) {
     return null;
   }
@@ -164,43 +116,24 @@ export function PlumePolygonOverlay({
   return (
     <>
       {contourPolygons.map((polygon, index) => {
-        // Validate polygon coordinates
-        if (!polygon.coordinates || polygon.coordinates.length < 4) {
-          return null; // Skip invalid polygons
-        }
-        
-        // Get V.I.C.T.O.R. styling properties
-        const maxConcentration = Math.max(...concentrationGrid.map(p => p.concentration));
-        const victorProps = getVictorVisualizationProperties(
-          polygon.concentrationLevel,
-          maxConcentration
-        );
+        // Type assertion for the custom prop we added
+        const p = polygon as PlumePolygon & { _victorWeight: number };
         
         return (
           <Polygon
-            key={`contour-${index}-${polygon.concentrationLevel}`}
-            positions={polygon.coordinates}
+            key={`contour-${index}-${p.concentrationLevel}`}
+            positions={p.coordinates}
             pathOptions={{
-              color: victorProps.color,
-              fillColor: victorProps.color,
-              fillOpacity: victorProps.opacity,
-              opacity: Math.min(victorProps.opacity + 0.2, 1.0), // Slightly more opaque border
-              weight: victorProps.weight,
-              stroke: true,
+              color: p.color,       // Stroke Color
+              fillColor: p.color,   // Fill Color
+              fillOpacity: p.opacity,
+              opacity: p.opacity + 0.1, // Stroke is slightly more visible
+              weight: p._victorWeight,
+              stroke: p._victorWeight > 0,
               fill: true,
-              interactive: true
+              interactive: false // Disable interaction to make it feel like a "layer"
             }}
-          >
-            {/* Optional: Add popup with concentration information */}
-            {/* 
-            <Popup>
-              <div className="font-mono text-sm bg-black text-white p-2">
-                <div>Concentration Level: {polygon.concentrationLevel.toExponential(2)} g/m³</div>
-                <div>Contour #{index + 1}</div>
-              </div>
-            </Popup>
-            */}
-          </Polygon>
+          />
         );
       })}
     </>

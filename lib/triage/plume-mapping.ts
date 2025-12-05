@@ -53,7 +53,7 @@ const MAPPING_CONFIG = {
   /** Maximum emission rate (g/s) */
   MAX_EMISSION_RATE: 100.0,
   /** Stack height for airborne transmission (m) */
-  AIRBORNE_STACK_HEIGHT: 100.0,
+  AIRBORNE_STACK_HEIGHT: 5.0,
   /** Stack height for fluid transmission (m) */
   FLUID_STACK_HEIGHT: 2.0,
   /** Default wind speed when not available (m/s) */

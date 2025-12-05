@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { MapContainer, TileLayer } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { PlumeParameters, ConcentrationPoint, generateConcentrationGrid, clearDispersionCoefficientsCache } from '@/lib/gaussian-plume';
@@ -15,33 +15,22 @@ interface GaussianPlumeMapProps {
   externalParameters?: PlumeParameters;
 }
 
-/**
- * Default plume parameters for initial state
- * Using NYC coordinates with typical atmospheric conditions
- */
 const DEFAULT_PLUME_PARAMETERS: PlumeParameters = {
-  sourceX: -74.0060,        // NYC longitude
-  sourceY: 40.7128,         // NYC latitude
-  emissionRate: 10.0,       // 10 g/s
-  windSpeed: 5.0,           // 5 m/s (will be updated from weather API)
-  windDirection: 270.0,     // West wind (will be updated from weather API)
-  stackHeight: 50.0,        // 50 meters
-  stabilityClass: 'D'       // Neutral conditions
+  sourceX: -74.0060,
+  sourceY: 40.7128,
+  emissionRate: 10.0,
+  windSpeed: 5.0,
+  windDirection: 270.0,
+  stackHeight: 10.0, // Reduced default for better visibility
+  stabilityClass: 'D'
 };
 
-/**
- * Configuration for concentration grid generation
- */
 const GRID_CONFIG = {
-  resolution: 50,           // 50x50 grid points
-  maxDistance: 10000,       // 10 km maximum distance
-  debounceDelay: 300        // 300ms debounce delay
+  resolution: 50,
+  maxDistance: 10000,
+  debounceDelay: 300
 } as const;
 
-/**
- * Custom hook for debouncing parameter changes
- * Prevents excessive recalculation when user rapidly changes parameters
- */
 function useDebounce<T>(value: T, delay: number): T {
   const [debouncedValue, setDebouncedValue] = useState<T>(value);
 
@@ -58,73 +47,52 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-/**
- * Main Gaussian plume visualization component with integrated calculation and rendering
- * 
- * This component manages the complete workflow:
- * 1. Parameter input via PlumeParameterControls
- * 2. Debounced recalculation of concentration grid
- * 3. Visualization of results via polygon overlays and source marker
- * 4. Interactive Leaflet map with V.I.C.T.O.R. dark styling
- */
 export function GaussianPlumeMap({
-  initialCenter = [40.7128, -74.0060], // Default to New York City
+  initialCenter = [40.7128, -74.0060],
   initialZoom = 10,
   externalParameters
 }: GaussianPlumeMapProps) {
-  // State management for plume parameters
+  // 1. Manage Parameters State
   const [plumeParameters, setPlumeParameters] = useState<PlumeParameters>({
     ...DEFAULT_PLUME_PARAMETERS,
     sourceY: initialCenter[0],
     sourceX: initialCenter[1]
   });
+
+  // 2. Manage Calculation Data State (Fixed: Moved out of useMemo)
+  const [concentrationGrid, setConcentrationGrid] = useState<ConcentrationPoint[]>([]);
   const [isCalculating, setIsCalculating] = useState<boolean>(false);
   const [calculationError, setCalculationError] = useState<string | null>(null);
 
-  // Update parameters when external parameters are provided (from triage dashboard)
+  // Sync external parameters
   useEffect(() => {
     if (externalParameters) {
-      console.log('Updating plume parameters from external source:', externalParameters);
       setPlumeParameters(externalParameters);
     }
   }, [externalParameters]);
 
-  // Debounce parameter changes to prevent excessive recalculation
   const debouncedParameters = useDebounce(plumeParameters, GRID_CONFIG.debounceDelay);
 
-  /**
-   * Handles parameter changes from the control panel
-   * Updates state and triggers debounced recalculation
-   * Clears cache when stability class changes for optimal performance
-   */
   const handleParametersChange = useCallback((newParams: PlumeParameters) => {
-    // Clear dispersion coefficients cache if stability class changed
     if (plumeParameters.stabilityClass !== newParams.stabilityClass) {
       clearDispersionCoefficientsCache();
     }
-    
     setPlumeParameters(newParams);
-    setCalculationError(null); // Clear any previous errors
+    setCalculationError(null);
   }, [plumeParameters.stabilityClass]);
 
-  /**
-   * Generates concentration grid based on current parameters
-   * Memoized to prevent unnecessary recalculation on re-renders
-   * Includes performance monitoring and optimization
-   */
-  const concentrationGrid: ConcentrationPoint[] = useMemo(() => {
-    if (!debouncedParameters) {
-      return [];
-    }
+  // 3. EFFECT: Perform Calculation when parameters change
+  useEffect(() => {
+    if (!debouncedParameters) return;
 
-    let grid: ConcentrationPoint[] = [];
+    let isMounted = true;
 
     const performCalculation = async () => {
       try {
         setIsCalculating(true);
         setCalculationError(null);
 
-        // Use performance monitoring for the calculation
+        // Run calculation
         const { result, metrics } = await measurePerformance(
           'CONCENTRATION_GRID',
           GRID_CONFIG.resolution * GRID_CONFIG.resolution,
@@ -135,40 +103,38 @@ export function GaussianPlumeMap({
           )
         );
 
-        grid = result;
-
-        // Check performance status and log warnings if needed
-        const status = getPerformanceStatus('CONCENTRATION_GRID', metrics.executionTime);
-        if (status === 'poor' && process.env.NODE_ENV === 'development') {
-          console.warn(
-            `Poor performance detected: ${metrics.executionTime.toFixed(2)}ms for ${grid.length} points. ` +
-            `Consider reducing grid resolution or maximum distance.`
-          );
+        if (isMounted) {
+          // Update State with Results
+          setConcentrationGrid(result);
+          
+          const status = getPerformanceStatus('CONCENTRATION_GRID', metrics.executionTime);
+          if (status === 'poor' && process.env.NODE_ENV === 'development') {
+            console.warn(`Poor calc performance: ${metrics.executionTime.toFixed(2)}ms`);
+          }
         }
-
-        return grid;
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown calculation error';
-        setCalculationError(errorMessage);
-        console.error('Gaussian plume calculation error:', error);
-        return [];
+        if (isMounted) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown calculation error';
+          setCalculationError(errorMessage);
+          console.error('Gaussian plume calculation error:', error);
+          setConcentrationGrid([]);
+        }
       } finally {
-        setIsCalculating(false);
+        if (isMounted) {
+          setIsCalculating(false);
+        }
       }
     };
 
-    // Execute the calculation
     performCalculation();
-    
-    return grid;
+
+    return () => {
+      isMounted = false;
+    };
   }, [debouncedParameters]);
 
-  /**
-   * Update map center when source location changes
-   */
-  const mapCenter: [number, number] = useMemo(() => {
-    return [plumeParameters.sourceY, plumeParameters.sourceX];
-  }, [plumeParameters.sourceY, plumeParameters.sourceX]);
+  // Derive map center from source (keep simplistic for now)
+  const mapCenter: [number, number] = [plumeParameters.sourceY, plumeParameters.sourceX];
 
   return (
     <div className="flex flex-col lg:flex-row w-full h-full min-h-[600px] bg-black">
@@ -180,7 +146,6 @@ export function GaussianPlumeMap({
           mapCenter={mapCenter}
         />
         
-        {/* Calculation Status */}
         <div className="p-4 border-t border-gray-600">
           <div className="space-y-2">
             <div className="text-xs text-gray-400">
@@ -196,12 +161,6 @@ export function GaussianPlumeMap({
               )}
             </div>
             
-            {calculationError && (
-              <div className="text-xs text-red-400 bg-red-900/20 p-2 rounded border border-red-500/30">
-                {calculationError}
-              </div>
-            )}
-            
             {!isCalculating && !calculationError && (
               <div className="text-xs text-gray-500">
                 Grid Points: {concentrationGrid.length.toLocaleString()}
@@ -213,7 +172,6 @@ export function GaussianPlumeMap({
 
       {/* Map Visualization */}
       <div className="flex-1 relative bg-black border border-red-500/60">
-        {/* Loading Overlay */}
         {isCalculating && (
           <div className="absolute inset-0 bg-black/50 z-[1000] flex items-center justify-center">
             <div className="bg-black border border-yellow-500 p-4 rounded font-mono">
@@ -229,22 +187,15 @@ export function GaussianPlumeMap({
           center={mapCenter}
           zoom={initialZoom}
           className="w-full h-full"
-          zoomControl={true}
-          scrollWheelZoom={true}
-          doubleClickZoom={true}
-          dragging={true}
-          attributionControl={true}
-          key={`${mapCenter[0]}-${mapCenter[1]}`} // Force re-render when center changes
+          // Force re-render if center changes drastically to ensure tiles load
+          key={`${mapCenter[0]}-${mapCenter[1]}`} 
         >
-          {/* Dark tile layer following V.I.C.T.O.R. aesthetic */}
           <TileLayer
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-            subdomains="abcd"
-            maxZoom={19}
           />
 
-          {/* Concentration polygon overlay */}
+          {/* Render the Overlay if we have grid points */}
           {concentrationGrid.length > 0 && (
             <PlumePolygonOverlay
               concentrationGrid={concentrationGrid}
@@ -253,7 +204,6 @@ export function GaussianPlumeMap({
             />
           )}
 
-          {/* Source marker */}
           <SourceMarker plumeParams={plumeParameters} />
         </MapContainer>
       </div>

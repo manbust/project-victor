@@ -95,12 +95,12 @@ const MAX_CACHE_SIZE: number = 10000;
  * Based on Pasquill-Gifford stability classes
  */
 const SIGMA_Y_COEFFICIENTS: Record<string, { a: number; b: number }> = {
-  A: { a: 0.22, b: -0.5 },    // Extremely unstable
-  B: { a: 0.16, b: -0.5 },    // Moderately unstable
-  C: { a: 0.11, b: -0.5 },    // Slightly unstable
-  D: { a: 0.08, b: -0.5 },    // Neutral
-  E: { a: 0.06, b: -0.5 },    // Slightly stable
-  F: { a: 0.04, b: -0.5 }     // Moderately stable
+  A: { a: 0.22, b: -0.5 },
+  B: { a: 0.16, b: -0.5 },
+  C: { a: 0.11, b: -0.5 },
+  D: { a: 0.08, b: -0.5 },
+  E: { a: 0.06, b: -0.5 },
+  F: { a: 0.04, b: -0.5 }
 };
 
 /**
@@ -108,12 +108,12 @@ const SIGMA_Y_COEFFICIENTS: Record<string, { a: number; b: number }> = {
  * Different formulations for different stability classes
  */
 const SIGMA_Z_COEFFICIENTS: Record<string, { a: number; b?: number; c?: number }> = {
-  A: { a: 0.20 },                           // σz = 0.20x
-  B: { a: 0.12 },                           // σz = 0.12x
-  C: { a: 0.08, b: 0.0002, c: -0.5 },      // σz = 0.08x(1 + 0.0002x)^(-0.5)
-  D: { a: 0.06, b: 0.0015, c: -0.5 },      // σz = 0.06x(1 + 0.0015x)^(-0.5)
-  E: { a: 0.03, b: 0.0003, c: -1 },        // σz = 0.03x(1 + 0.0003x)^(-1)
-  F: { a: 0.016, b: 0.0003, c: -1 }        // σz = 0.016x(1 + 0.0003x)^(-1)
+  A: { a: 0.20 },
+  B: { a: 0.12 },
+  C: { a: 0.08, b: 0.0002, c: -0.5 },
+  D: { a: 0.06, b: 0.0015, c: -0.5 },
+  E: { a: 0.03, b: 0.0003, c: -1 },
+  F: { a: 0.016, b: 0.0003, c: -1 }
 };
 
 /**
@@ -122,29 +122,8 @@ const SIGMA_Z_COEFFICIENTS: Record<string, { a: number; b?: number; c?: number }
  * @throws Error if parameters are invalid
  */
 function validatePlumeParameters(params: PlumeParameters): void {
-  if (params.windSpeed <= 0) {
-    throw new Error('Wind speed must be positive (> 0 m/s)');
-  }
-  
-  if (params.emissionRate < 0) {
-    throw new Error('Emission rate cannot be negative');
-  }
-  
-  if (params.sourceY < -90 || params.sourceY > 90) {
-    throw new Error('Source latitude must be between -90 and 90 degrees');
-  }
-  
-  if (params.sourceX < -180 || params.sourceX > 180) {
-    throw new Error('Source longitude must be between -180 and 180 degrees');
-  }
-  
-  if (params.stackHeight < 0) {
-    throw new Error('Stack height cannot be negative');
-  }
-  
-  if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(params.stabilityClass)) {
-    throw new Error('Stability class must be A, B, C, D, E, or F');
-  }
+  if (params.windSpeed <= 0) throw new Error('Wind speed must be positive');
+  if (params.emissionRate < 0) throw new Error('Emission rate cannot be negative');
 }
 
 /**
@@ -162,59 +141,35 @@ export function calculateDispersionCoefficients(
   downwindDistance: number,
   stabilityClass: string
 ): DispersionCoefficients {
-  if (downwindDistance <= 0) {
-    throw new Error('Downwind distance must be positive');
-  }
-  
-  if (!SIGMA_Y_COEFFICIENTS[stabilityClass]) {
-    throw new Error(`Invalid stability class: ${stabilityClass}`);
-  }
-  
-  // Create cache key - round distance to reduce cache size while maintaining accuracy
-  const roundedDistance = Math.round(downwindDistance * 100) / 100; // Round to cm precision
+  const roundedDistance = Math.round(downwindDistance * 100) / 100;
   const cacheKey = `${roundedDistance}-${stabilityClass}`;
   
-  // Check cache first
   const cached = dispersionCoefficientsCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
+  if (cached) return cached;
   
-  // Calculate if not in cache
   const x: number = downwindDistance;
-  
-  // Calculate σy using: σy = a * x * (1 + 0.0001*x)^b
-  const sigmaYCoeff = SIGMA_Y_COEFFICIENTS[stabilityClass];
+  const sigmaYCoeff = SIGMA_Y_COEFFICIENTS[stabilityClass] || SIGMA_Y_COEFFICIENTS.D;
   const sigmaY: number = sigmaYCoeff.a * x * Math.pow(1 + 0.0001 * x, sigmaYCoeff.b);
   
-  // Calculate σz using stability-class specific formulas
-  const sigmaZCoeff = SIGMA_Z_COEFFICIENTS[stabilityClass];
+  const sigmaZCoeff = SIGMA_Z_COEFFICIENTS[stabilityClass] || SIGMA_Z_COEFFICIENTS.D;
   let sigmaZ: number;
   
   if (stabilityClass === 'A' || stabilityClass === 'B') {
-    // Simple linear relationship: σz = a * x
     sigmaZ = sigmaZCoeff.a * x;
   } else {
-    // Power law relationship: σz = a * x * (1 + b*x)^c
     sigmaZ = sigmaZCoeff.a * x * Math.pow(1 + (sigmaZCoeff.b || 0) * x, sigmaZCoeff.c || 0);
   }
   
-  const result: DispersionCoefficients = {
-    sigmaY: Math.max(sigmaY, 1e-6), // Prevent division by zero
-    sigmaZ: Math.max(sigmaZ, 1e-6)  // Prevent division by zero
+  const result = {
+    sigmaY: Math.max(sigmaY, 1e-6),
+    sigmaZ: Math.max(sigmaZ, 1e-6)
   };
   
-  // Cache the result (with size limit to prevent memory leaks)
   if (dispersionCoefficientsCache.size >= MAX_CACHE_SIZE) {
-    // Remove oldest entries (simple FIFO eviction)
     const firstKey = dispersionCoefficientsCache.keys().next().value;
-    if (firstKey) {
-      dispersionCoefficientsCache.delete(firstKey);
-    }
+    if (firstKey) dispersionCoefficientsCache.delete(firstKey);
   }
-  
   dispersionCoefficientsCache.set(cacheKey, result);
-  
   return result;
 }
 
@@ -245,40 +200,21 @@ export function calculateConcentration(
   params: PlumeParameters,
   coeffs: DispersionCoefficients
 ): number {
-  // Validate input parameters
   validatePlumeParameters(params);
+  if (params.emissionRate === 0 || x <= 0) return 0;
   
-  // Handle special case: zero emission rate
-  if (params.emissionRate === 0) {
-    return 0;
-  }
+  const Q = params.emissionRate;
+  const u = params.windSpeed;
+  const H = params.stackHeight;
+  const { sigmaY, sigmaZ } = coeffs;
   
-  // Handle special case: at source location (x = 0)
-  if (x <= 0) {
-    return 0; // Concentration is undefined at source in Gaussian model
-  }
+  const normalizationFactor = Q / (2 * Math.PI * u * sigmaY * sigmaZ);
+  const yTerm = -(y * y) / (2 * sigmaY * sigmaY);
+  const horizontalGaussian = Math.exp(Math.max(yTerm, -MAX_EXPONENT));
+  const zTerm = -((z - H) * (z - H)) / (2 * sigmaZ * sigmaZ);
+  const verticalGaussian = Math.exp(Math.max(zTerm, -MAX_EXPONENT));
   
-  const Q: number = params.emissionRate;
-  const u: number = params.windSpeed;
-  const H: number = params.stackHeight;
-  const sigmaY: number = coeffs.sigmaY;
-  const sigmaZ: number = coeffs.sigmaZ;
-  
-  // Calculate the normalization factor: Q / (2π * u * σy * σz)
-  const normalizationFactor: number = Q / (2 * Math.PI * u * sigmaY * sigmaZ);
-  
-  // Calculate horizontal Gaussian term: exp(-y² / (2σy²))
-  const yTerm: number = -(y * y) / (2 * sigmaY * sigmaY);
-  const horizontalGaussian: number = Math.exp(Math.max(yTerm, -MAX_EXPONENT));
-  
-  // Calculate vertical Gaussian term: exp(-(z-H)² / (2σz²))
-  const zTerm: number = -((z - H) * (z - H)) / (2 * sigmaZ * sigmaZ);
-  const verticalGaussian: number = Math.exp(Math.max(zTerm, -MAX_EXPONENT));
-  
-  // Calculate final concentration
-  const concentration: number = normalizationFactor * horizontalGaussian * verticalGaussian;
-  
-  // Return zero for negligible concentrations to improve performance
+  const concentration = normalizationFactor * horizontalGaussian * verticalGaussian;
   return concentration < MIN_CONCENTRATION_THRESHOLD ? 0 : concentration;
 }
 
@@ -299,67 +235,42 @@ export function calculateConcentration(
 export function generateConcentrationGrid(
   params: PlumeParameters,
   gridResolution: number = 50,
-  maxDistance: number = 10000,
-  concentrationThreshold?: number
+  maxDistance: number = 10000
 ): ConcentrationPoint[] {
   validatePlumeParameters(params);
-  
-  if (gridResolution <= 0) {
-    throw new Error('Grid resolution must be positive');
-  }
-  
-  if (maxDistance <= 0) {
-    throw new Error('Maximum distance must be positive');
-  }
-  
-  // Use provided threshold or calculate adaptive threshold based on emission rate
-  const threshold = concentrationThreshold ?? Math.max(
-    MIN_CONCENTRATION_THRESHOLD,
-    params.emissionRate * 1e-9 // Adaptive threshold: 1 billionth of emission rate
-  );
-  
+
   const points: ConcentrationPoint[] = [];
-  const deltaX: number = maxDistance / gridResolution;
-  const deltaY: number = (2 * maxDistance) / gridResolution; // Symmetric about centerline
   
-  // Ground-level calculation (z = 0)
-  const z: number = 0;
-  
-  // Pre-calculate maximum crosswind distance for early termination
-  // Beyond 3*σy, concentration drops to ~1% of centerline value
-  const maxCrosswindFactor = 3.0;
-  
-  for (let i = 1; i <= gridResolution; i++) { // Start from i=1 to avoid x=0
-    const x: number = i * deltaX;
+  // Calculate dispersion at max distance to determine the "cone" width
+  const maxCoeffs = calculateDispersionCoefficients(maxDistance, params.stabilityClass);
+  // We scan 4 standard deviations (sigmaY) to each side, which covers >99.9% of the plume
+  const maxPlumeWidth = maxCoeffs.sigmaY * 4; 
+
+  const deltaX = maxDistance / gridResolution;
+  const z = 0; // Ground level
+
+  // Loop Downwind (X)
+  for (let i = 1; i <= gridResolution; i++) {
+    const x = i * deltaX;
     
-    // Calculate dispersion coefficients for this downwind distance (memoized)
-    const coeffs: DispersionCoefficients = calculateDispersionCoefficients(x, params.stabilityClass);
+    // Calculate Coefficients for this distance
+    const coeffs = calculateDispersionCoefficients(x, params.stabilityClass);
     
-    // Calculate maximum meaningful crosswind distance for this downwind distance
-    const maxMeaningfulY = maxCrosswindFactor * coeffs.sigmaY;
-    
-    // Calculate centerline concentration to check if this row is worth processing
-    const centerlineConcentration = calculateConcentration(x, 0, z, params, coeffs);
-    
-    // Skip entire row if even centerline concentration is below threshold
-    if (centerlineConcentration < threshold) {
-      continue;
-    }
-    
+    // Adaptive Crosswind Scanning:
+    // Only scan the width relevant to this specific distance (plus a buffer)
+    // This creates a triangular grid shape matching the plume cone
+    const currentPlumeWidth = Math.min(coeffs.sigmaY * 4, maxPlumeWidth);
+    const deltaY = (currentPlumeWidth * 2) / gridResolution; 
+
+    // Loop Crosswind (Y)
     for (let j = 0; j < gridResolution; j++) {
-      const y: number = (j - gridResolution / 2) * deltaY;
+      // Center the Y scan around 0
+      const y = (j - gridResolution / 2) * deltaY;
       
-      // Skip points beyond meaningful crosswind distance
-      if (Math.abs(y) > maxMeaningfulY) {
-        continue;
-      }
+      const concentration = calculateConcentration(x, y, z, params, coeffs);
       
-      // Calculate concentration at this point
-      const concentration: number = calculateConcentration(x, y, z, params, coeffs);
-      
-      // Skip points with negligible concentration for performance optimization
-      if (concentration > threshold) {
-        // Convert Cartesian coordinates to geographic coordinates
+      // Significantly lowered threshold to ensure we capture the "tail" of the plume
+      if (concentration > 1e-15) { 
         try {
           const [lat, lon] = cartesianToGeographic({
             x,
@@ -368,16 +279,8 @@ export function generateConcentrationGrid(
             windDirection: params.windDirection
           });
           
-          points.push({
-            x,
-            y,
-            concentration,
-            lat,
-            lon
-          });
+          points.push({ x, y, concentration, lat, lon });
         } catch {
-          // Skip points that result in invalid geographic coordinates
-          // This can happen at extreme distances or near poles
           continue;
         }
       }
